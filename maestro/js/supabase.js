@@ -1,7 +1,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
 
 // Preencha com a URL e a chave PÚBLICA (anon) do projeto Supabase do próprio Maestro.
-const SUPABASE_URL = 'https://vnptwivdzqwdacjvjjwo.supabase.co';
+export const SUPABASE_URL = 'https://vnptwivdzqwdacjvjjwo.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZucHR3aXZkenF3ZGFjanZqandvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMTM0MDIsImV4cCI6MjEwNzY4OTQwMn0.wy9ERZjhxgxi4w0csOv6LYbliI8aUZnfDtxVq8Gs6Og';
 
 export const isConfigured = !SUPABASE_URL.includes('SEU-PROJETO') && SUPABASE_ANON_KEY !== 'SUA_ANON_KEY';

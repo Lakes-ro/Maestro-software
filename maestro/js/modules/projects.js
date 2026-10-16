@@ -1,0 +1,269 @@
+import { supabase, SUPABASE_URL } from '../supabase.js';
+import { h, icon, toast, modal, confirmDialog, withLoading, setTopbar, emailColor, copyText } from '../ui.js';
+
+const COLORS = ['#a78bfa', '#2dd4bf', '#f472b6', '#22d3ee', '#a3e635', '#e0a38a', '#94a3b8'];
+const STATUS = [['ativo', 'Ativo'], ['planejado', 'Planejado (em breve)'], ['arquivado', 'Arquivado']];
+const NIVEL = [['atalho', 'Atalho (só abre o link)'], ['monitoramento', 'Monitoramento (status e alertas)'], ['completo', 'Completo (painel no Maestro)']];
+const NIVEL_LABEL = { atalho: 'Atalho', monitoramento: 'Monitoramento', completo: 'Completo' };
+const STATUS_BADGE = { ativo: ['badge badge--ok', 'Ativo'], planejado: ['badge badge--warn', 'Em breve'], arquivado: ['badge badge--muted', 'Arquivado'] };
+
+let root = null, ctx = null, items = [], dragId = null;
+
+export async function render(container, context) {
+  root = container;
+  ctx = context;
+  setTopbar('Projetos',
+    h('button', { class: 'btn btn--primary btn--sm', type: 'button', onclick: () => openForm() }, icon('plus', 16), 'Novo projeto'));
+  await load();
+}
+
+export function destroy() { root = null; items = []; dragId = null; }
+
+/* ---------- Dados ---------- */
+async function load() {
+  const { data, error } = await withLoading(() => supabase.from('projetos').select('*').order('ordem'));
+  if (error) return toast(`Erro ao carregar projetos: ${error.message}`, 'error');
+  items = data;
+  paint();
+}
+
+const log = async (acao, p) => {
+  await supabase.from('logs_auditoria').insert({ acao, projeto_id: p.id ?? null, detalhes: { nome: p.nome } });
+};
+
+function groups() {
+  const m = new Map();
+  for (const p of items) {
+    const k = p.grupo || '';
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(p);
+  }
+  return m;
+}
+
+/* ---------- Lista ---------- */
+const bolt = (email) => h('span', { class: 'bolt', style: { color: emailColor(email) } }, icon('zap', 14));
+const iconBtn = (name, label, onclick, disabled = false) =>
+  h('button', { class: 'btn-icon', type: 'button', 'aria-label': label, title: label, onclick, disabled }, icon(name, 16));
+const sameGroup = (id, key) => (items.find((x) => x.id === id)?.grupo || '') === key;
+
+function row(p, i, arr, key) {
+  const [badgeClass, badgeText] = STATUS_BADGE[p.status] ?? STATUS_BADGE.ativo;
+  const el = h('div', {
+    class: 'prow', draggable: 'true',
+    ondragstart: (e) => {
+      dragId = p.id;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', p.id);
+      el.classList.add('dragging');
+    },
+    ondragend: () => {
+      dragId = null;
+      root?.querySelectorAll('.dragging, .over').forEach((x) => x.classList.remove('dragging', 'over'));
+    },
+    ondragover: (e) => {
+      if (dragId && dragId !== p.id && sameGroup(dragId, key)) { e.preventDefault(); el.classList.add('over'); }
+    },
+    ondragleave: () => el.classList.remove('over'),
+    ondrop: (e) => {
+      e.preventDefault();
+      if (dragId && dragId !== p.id) reorder(dragId, p.id, key);
+    },
+  },
+    h('span', { class: 'prow__grip', title: 'Arraste para reordenar' }, icon('grip', 16)),
+    h('span', { class: 'proj__dot', style: { '--c': p.cor || 'var(--text-3)' } }),
+    h('div', { class: 'prow__main' },
+      h('span', { class: 'prow__name' }, p.nome),
+      h('span', { class: 'prow__meta' }, p.email_supabase ? [bolt(p.email_supabase), p.email_supabase] : 'Sem e-mail Supabase')),
+    h('span', { class: badgeClass }, badgeText),
+    h('span', { class: 'badge badge--muted' }, NIVEL_LABEL[p.nivel] ?? p.nivel),
+    h('div', { class: 'prow__actions' },
+      iconBtn('up', 'Subir', () => move(p.id, -1, key), i === 0),
+      iconBtn('down', 'Descer', () => move(p.id, 1, key), i === arr.length - 1),
+      iconBtn('key', 'Token de integração', () => gerarToken(p)),
+      iconBtn('edit', 'Editar', () => openForm(p)),
+      iconBtn('trash', 'Remover', () => remove(p))));
+  return el;
+}
+
+function paint() {
+  if (!root) return;
+  if (!items.length) {
+    root.replaceChildren(h('div', { class: 'empty' },
+      h('h2', {}, 'Nenhum projeto ainda'),
+      h('p', { class: 'muted' }, 'Cadastre o primeiro para ele aparecer na sidebar.'),
+      h('button', { class: 'btn btn--primary', type: 'button', onclick: () => openForm() }, icon('plus', 16), 'Novo projeto')));
+    return;
+  }
+  root.replaceChildren(...[...groups()].map(([key, arr]) =>
+    h('section', { class: 'nav-group' },
+      h('h2', { class: 'nav-group__title' }, key || 'Sem grupo'),
+      h('div', { class: 'plist' }, ...arr.map((p, i) => row(p, i, arr, key))))));
+}
+
+/* ---------- Reordenar ---------- */
+function move(id, dir, key) {
+  const list = groups().get(key);
+  const i = list.findIndex((x) => x.id === id), j = i + dir;
+  if (j < 0 || j >= list.length) return;
+  list.splice(j, 0, list.splice(i, 1)[0]);
+  return saveOrder(list, key);
+}
+
+function reorder(fromId, toId, key) {
+  const list = groups().get(key);
+  const from = list.findIndex((x) => x.id === fromId), to = list.findIndex((x) => x.id === toId);
+  list.splice(to, 0, list.splice(from, 1)[0]);
+  return saveOrder(list, key);
+}
+
+async function saveOrder(list, key) {
+  const flat = [...groups()].flatMap(([k, arr]) => (k === key ? list : arr));
+  const updates = flat.map((p, i) => ({ id: p.id, ordem: i, mudou: p.ordem !== i })).filter((u) => u.mudou);
+  items = flat.map((p, i) => ({ ...p, ordem: i }));
+  paint();
+  const res = await Promise.all(updates.map((u) => supabase.from('projetos').update({ ordem: u.ordem }).eq('id', u.id)));
+  const fail = res.find((r) => r.error);
+  if (fail) { toast(`Erro ao reordenar: ${fail.error.message}`, 'error'); return load(); }
+  await ctx.reload();
+}
+
+/* ---------- Validação e salvamento ---------- */
+function validate(d) {
+  const isUrl = (s) => { try { return ['http:', 'https:'].includes(new URL(s).protocol); } catch { return false; } };
+  if (!d.nome) return 'Informe o nome do projeto.';
+  if (d.url_app && !isUrl(d.url_app)) return 'URL do sistema inválida.';
+  if (d.url_supabase && !/^https:\/\/[a-z0-9]+\.supabase\.co$/i.test(d.url_supabase)) return 'A URL do Supabase deve ser https://<ref>.supabase.co';
+  if (d.url_dashboard && !isUrl(d.url_dashboard)) return 'Link do dashboard inválido.';
+  if (d.email_supabase && !/^\S+@\S+\.\S+$/.test(d.email_supabase)) return 'E-mail inválido.';
+  if (d.chave_publica) {
+    if (d.chave_publica.startsWith('sb_secret_')) return 'Essa é uma chave secreta. Use apenas a anon/publishable.';
+    try {
+      if (JSON.parse(atob(d.chave_publica.split('.')[1])).role === 'service_role') return 'Essa é a chave service_role. Use apenas a anon.';
+    } catch { /* chave publishable não é JWT: ok */ }
+  }
+  return null;
+}
+
+async function save(p, d) {
+  const err = validate(d);
+  if (err) { toast(err, 'error'); return false; }
+  const nextOrder = items.length ? Math.max(...items.map((x) => x.ordem)) + 1 : 0;
+  const q = p
+    ? supabase.from('projetos').update(d).eq('id', p.id)
+    : supabase.from('projetos').insert({ ...d, ordem: nextOrder });
+  const { data, error } = await withLoading(() => q.select('id').single());
+  if (error) { toast(`Erro ao salvar: ${error.message}`, 'error'); return false; }
+  await log(p ? 'projeto_editado' : 'projeto_criado', { id: data.id, nome: d.nome });
+  toast('Projeto salvo.', 'success');
+  await load();
+  await ctx.reload();
+}
+
+async function remove(p) {
+  const ok = await confirmDialog(
+    `Remover "${p.nome}" do Maestro? Só o cadastro é apagado, o sistema em si não é afetado. Para apenas esconder, use o status Arquivado.`,
+    { title: 'Remover projeto', confirmLabel: 'Remover', danger: true });
+  if (!ok) return;
+  await log('projeto_removido', p);
+  const { error } = await withLoading(() => supabase.from('projetos').delete().eq('id', p.id));
+  if (error) return toast(`Erro ao remover: ${error.message}`, 'error');
+  toast('Projeto removido.', 'success');
+  await load();
+  await ctx.reload();
+}
+
+/* ---------- Formulário ---------- */
+function openForm(p = null) {
+  const v = p ?? {};
+  let cor = v.cor || COLORS[0];
+  const f = {};
+
+  const text = (key, label, { span, ph, type = 'text', list } = {}) => {
+    f[key] = h('input', { type, value: v[key] ?? '', placeholder: ph, list, autocomplete: 'off', spellcheck: 'false' });
+    return h('label', { class: span ? 'field span-2' : 'field' }, h('span', {}, label), f[key]);
+  };
+  const select = (key, label, opts) => {
+    f[key] = h('select', {}, ...opts.map(([val, txt]) => h('option', { value: val, selected: (v[key] ?? opts[0][0]) === val }, txt)));
+    return h('label', { class: 'field' }, h('span', {}, label), f[key]);
+  };
+
+  const swatches = COLORS.map((c) => {
+    const b = h('button', {
+      type: 'button', class: 'swatch', style: { '--c': c }, 'aria-label': `Cor ${c}`, 'aria-pressed': String(c === cor),
+      onclick: () => { cor = c; swatches.forEach((s) => s.setAttribute('aria-pressed', String(s.dataset.c === c))); },
+    });
+    b.dataset.c = c;
+    return b;
+  });
+  const chk = h('input', { type: 'checkbox', checked: !!v.modulo_pagamentos });
+  const grupos = [...new Set(items.map((x) => x.grupo).filter(Boolean))];
+
+  const body = h('div', { class: 'form-grid' },
+    text('nome', 'Nome do projeto', { ph: 'Ex.: Marketplace' }),
+    text('grupo', 'Grupo', { ph: 'Ex.: Negócios', list: 'grupos-list' }),
+    h('datalist', { id: 'grupos-list' }, ...grupos.map((g) => h('option', { value: g }))),
+    h('div', { class: 'field span-2' }, h('span', {}, 'Cor'), h('div', { class: 'swatches' }, ...swatches)),
+    select('status', 'Status', STATUS),
+    select('nivel', 'Nível de integração', NIVEL),
+    text('url_app', 'URL do sistema (abre dentro do Maestro)', { span: true, ph: 'https://...' }),
+    text('email_supabase', 'E-mail da conta Supabase', { span: true, ph: 'conta@exemplo.com' }),
+    text('url_supabase', 'URL do projeto Supabase', { span: true, ph: 'https://xxxx.supabase.co' }),
+    text('chave_publica', 'Chave pública (anon / publishable)', { span: true, type: 'password' }),
+    text('url_dashboard', 'Link do dashboard (opcional; se vazio, é gerado pela URL do Supabase)', { span: true }),
+    h('label', { class: 'check span-2' }, chk, h('span', {}, 'Ativar módulo de pagamentos (InfinitePay)')));
+
+  const collect = () => {
+    const val = (k) => f[k].value.trim() || null;
+    return {
+      nome: f.nome.value.trim(), grupo: val('grupo'), cor,
+      status: f.status.value, nivel: f.nivel.value,
+      url_app: val('url_app'), url_supabase: val('url_supabase')?.replace(/\/+$/, '') ?? null,
+      chave_publica: val('chave_publica'), url_dashboard: val('url_dashboard'),
+      email_supabase: val('email_supabase')?.toLowerCase() ?? null,
+      modulo_pagamentos: chk.checked,
+    };
+  };
+
+  modal({
+    title: p ? 'Editar projeto' : 'Novo projeto', body,
+    actions: [{ label: 'Cancelar' }, { label: 'Salvar', variant: 'primary', onClick: () => save(p, collect()) }],
+  });
+  f.nome.focus();
+}
+
+/* ---------- Token de integração (ingest) ---------- */
+const sha256 = async (s) =>
+  [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))]
+    .map((b) => b.toString(16).padStart(2, '0')).join('');
+
+async function gerarToken(p) {
+  const ok = await confirmDialog(
+    p.ingest_token_hash ? 'Este projeto já tem um token. Gerar outro invalida o anterior. Continuar?' : 'Gerar o token de integração deste projeto?',
+    { title: 'Token de integração', confirmLabel: 'Gerar' });
+  if (!ok) return;
+  const token = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const { error } = await withLoading(async () =>
+    supabase.from('projetos').update({ ingest_token_hash: await sha256(token) }).eq('id', p.id));
+  if (error) return toast(`Erro ao gerar token: ${error.message}`, 'error');
+  await log('token_gerado', p);
+  await load();
+  const exemplo = `// No SERVIDOR do projeto (Edge Function / backend). Nunca no front-end.
+await fetch('${SUPABASE_URL}/functions/v1/ingest', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', 'x-maestro-token': MAESTRO_TOKEN },
+  body: JSON.stringify({
+    projeto_id: '${p.id}',
+    notificacoes: [{ tipo: 'sem_lancamento', titulo: 'Usuários sem lançamentos', contagem: 12, gravidade: 'atencao' }],
+    pagamentos: [{ pedido_ref: 'MKT-0231', valor_centavos: 18000, status: 'pago', forma: 'pix' }],
+  }),
+});`;
+  modal({
+    title: 'Token de integração',
+    body: h('div', { class: 'token-box' },
+      h('p', { class: 'muted' }, 'Copie agora: ele não será mostrado de novo. Guarde como secret no servidor do projeto.'),
+      h('code', { class: 'code' }, token),
+      h('pre', { class: 'code' }, exemplo)),
+    actions: [{ label: 'Copiar token', variant: 'primary', onClick: () => { copyText(token); return false; } }, { label: 'Fechar' }],
+  });
+}

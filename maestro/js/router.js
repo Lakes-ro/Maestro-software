@@ -8,30 +8,53 @@ const $ = (id) => document.getElementById(id);
 const routes = [
   { re: /^\/$/, title: 'Início', module: './modules/dashboard.js' },
   { re: /^\/projetos$/, title: 'Projetos', module: './modules/projects.js' },
+  { re: /^\/notificacoes$/, title: 'Notificações', module: './modules/notifications.js' },
   { re: /^\/pagamentos$/, title: 'Pagamentos', module: './modules/payments.js' },
+  { re: /^\/logs$/, title: 'Logs', module: './modules/logs.js' },
+  { re: /^\/configuracoes$/, title: 'Configurações', module: './modules/settings.js' },
   { re: /^\/p\/([\w-]+)$/, viewer: true },
 ];
 
 const NAV = [
   { path: '/', label: 'Início', icon: 'home' },
+  { path: '/notificacoes', label: 'Notificações', icon: 'bell' },
   { path: '/pagamentos', label: 'Pagamentos', icon: 'wallet' },
   { path: '/projetos', label: 'Projetos', icon: 'grid' },
+  { path: '/logs', label: 'Logs', icon: 'log' },
+  { path: '/configuracoes', label: 'Configurações', icon: 'sliders' },
 ];
 
-const state = { projetos: [], current: null, navId: 0 };
+const state = { projetos: [], alertas: new Map(), alertTotal: 0, channel: null, current: null, navId: 0 };
 const currentPath = () => location.hash.slice(1) || '/';
 const closeNav = () => $('app').classList.remove('nav-open');
 
 const ctx = () => ({
   get projetos() { return state.projetos; },
   user: getUser(),
+  get alertas() { return state.alertas; },
   reload: loadProjects,
+  refreshAlerts: loadAlerts,
   setTopbar,
 });
 
 /* ---------- Dados ---------- */
+async function fetchAlerts() {
+  const { data } = await supabase.from('notificacoes').select('projeto_id, contagem').eq('status', 'aberta');
+  state.alertas = new Map();
+  state.alertTotal = 0;
+  for (const n of data ?? []) {
+    state.alertas.set(n.projeto_id, (state.alertas.get(n.projeto_id) ?? 0) + n.contagem);
+    state.alertTotal += n.contagem;
+  }
+}
+
+export async function loadAlerts() { await fetchAlerts(); renderSidebar(); }
+
 export async function loadProjects() {
-  const { data, error } = await supabase.from('projetos').select('*').neq('status', 'arquivado').order('ordem');
+  const [{ data, error }] = await Promise.all([
+    supabase.from('projetos').select('*').neq('status', 'arquivado').order('ordem'),
+    fetchAlerts(),
+  ]);
   if (error) toast(`Erro ao carregar projetos: ${error.message}`, 'error');
   else state.projetos = data;
   renderSidebar();
@@ -54,8 +77,10 @@ function projectItem(p) {
   const dot = h('span', { class: 'proj__dot', style: { '--c': p.cor || 'var(--text-3)' } });
   const name = h('span', { class: 'proj__name' }, p.nome);
   const bolt = p.email_supabase ? boltFor(p.email_supabase) : null;
+  const n = state.alertas.get(p.id);
+  const badge = n ? h('span', { class: 'nb', title: `${n} alerta(s) aberto(s)` }, n) : null;
   if (soon) return h('span', { class: 'proj proj--soon', 'aria-disabled': 'true' }, dot, name, bolt, h('span', { class: 'tag' }, 'Em breve'));
-  const a = link(`/p/${p.id}`, dot, name, bolt);
+  const a = link(`/p/${p.id}`, dot, name, bolt, badge);
   a.classList.add('proj');
   return a;
 }
@@ -73,7 +98,8 @@ function renderSidebar() {
   $('sidebar').replaceChildren(
     h('div', { class: 'brand' }, h('span', { class: 'brand__logo' }, 'M'), h('span', { class: 'brand__name' }, 'Maestro')),
     h('nav', { class: 'nav', 'aria-label': 'Principal' }, ...NAV.map((n) => {
-      const a = link(n.path, icon(n.icon), h('span', {}, n.label));
+      const cnt = n.path === '/notificacoes' ? state.alertTotal : 0;
+      const a = link(n.path, icon(n.icon), h('span', {}, n.label), cnt ? h('span', { class: 'nb' }, cnt) : null);
       a.classList.add('nav__item');
       return a;
     })),
@@ -174,11 +200,19 @@ export async function initRouter() {
   window.removeEventListener('hashchange', navigate);
   window.addEventListener('hashchange', navigate);
   await withLoading(loadProjects);
+  if (state.channel) supabase.removeChannel(state.channel);
+  state.channel = supabase.channel('maestro-alertas')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'notificacoes' }, (payload) => {
+      if (payload.eventType === 'INSERT' && payload.new?.gravidade === 'urgente') toast(`Novo alerta: ${payload.new.titulo}`, 'warn');
+      loadAlerts();
+    })
+    .subscribe();
   navigate();
 }
 
 export async function destroyRouter() {
   window.removeEventListener('hashchange', navigate);
+  if (state.channel) { supabase.removeChannel(state.channel); state.channel = null; }
   await teardown();
   state.projetos = [];
   $('sidebar').replaceChildren();
