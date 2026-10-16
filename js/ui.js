@@ -66,7 +66,12 @@ export function modal({ title, body, actions = [], dismissible = true, onClose }
     class: `btn btn--${a.variant || 'ghost'}`, type: 'button',
     onclick: async () => { if ((await a.onClick?.()) !== false) close(); },
   }, a.label));
-  const overlay = h('div', { class: 'modal-overlay', onclick: (e) => { if (e.target === overlay && dismissible) close(); } },
+  let downOnOverlay = false; // só fecha se o clique COMEÇOU e TERMINOU fora do modal
+  const overlay = h('div', {
+    class: 'modal-overlay',
+    onmousedown: (e) => { downOnOverlay = e.target === overlay; },
+    onclick: (e) => { if (e.target === overlay && downOnOverlay && dismissible) close(); },
+  },
     h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
       h('h2', { class: 'modal__title' }, title),
       h('div', { class: 'modal__body' }, body),
@@ -131,3 +136,19 @@ export const formatBRL = (centavos) =>
 
 export const formatDateTime = (iso) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+
+/* ---------- Cor de destaque personalizável ---------- */
+export const ACCENT_KEY = 'maestro-accent';
+export function applyAccent(hex) {
+  const st = document.documentElement.style;
+  if (!/^#[0-9a-f]{6}$/i.test(hex ?? '')) {
+    ['--accent', '--accent-soft', '--accent-bg', '--on-accent'].forEach((k) => st.removeProperty(k));
+    return;
+  }
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const mix = (c) => Math.round(c + (255 - c) * 0.3);
+  st.setProperty('--accent', hex);
+  st.setProperty('--accent-soft', `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`);
+  st.setProperty('--accent-bg', `rgba(${r}, ${g}, ${b}, .16)`);
+  st.setProperty('--on-accent', (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? '#0c0f15' : '#ffffff');
+}

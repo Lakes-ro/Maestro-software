@@ -1,5 +1,5 @@
 import { supabase } from '../supabase.js';
-import { h, toast, setTopbar, setBusy, confirmDialog } from '../ui.js';
+import { h, toast, setTopbar, setBusy, confirmDialog, applyAccent, ACCENT_KEY } from '../ui.js';
 
 export function render(root, ctx) {
   setTopbar('Configurações');
@@ -34,9 +34,29 @@ export function render(root, ctx) {
       }
     } }, 'Sair de todos os dispositivos'));
 
+  const PADRAO = '#6c8cff';
+  const salvo = (() => { try { return localStorage.getItem(ACCENT_KEY); } catch { return null; } })();
+  const picker = h('input', { type: 'color', class: 'color-input', value: salvo || PADRAO, 'aria-label': 'Cor de destaque' });
+  const hex = h('input', { type: 'text', class: 'hex-input', value: salvo || PADRAO, maxlength: '7', spellcheck: 'false', 'aria-label': 'Cor em hexadecimal' });
+  const aplicar = (c) => {
+    if (!/^#[0-9a-f]{6}$/i.test(c)) { hex.value = picker.value; return toast('Use o formato #RRGGBB.', 'warn'); }
+    picker.value = c; hex.value = c; applyAccent(c);
+    try { localStorage.setItem(ACCENT_KEY, c); } catch { /* ignora */ }
+  };
+  picker.addEventListener('input', () => aplicar(picker.value));
+  hex.addEventListener('change', () => aplicar(hex.value.trim()));
+  const aparencia = h('div', { class: 'card settings__card' },
+    h('h2', { class: 'modal__title' }, 'Aparência'),
+    h('p', { class: 'muted' }, 'Cor de destaque do Maestro (botões, item ativo e logo). Fica salva neste aparelho.'),
+    h('div', { class: 'colorrow' }, picker, hex),
+    h('button', { class: 'btn btn--sm', type: 'button', onclick: () => {
+      picker.value = PADRAO; hex.value = PADRAO; applyAccent(null);
+      try { localStorage.removeItem(ACCENT_KEY); } catch { /* ignora */ }
+    } }, 'Restaurar padrão'));
+
   root.replaceChildren(h('div', { class: 'settings' },
     h('div', { class: 'card settings__card' },
       h('h2', { class: 'modal__title' }, 'Conta'),
       h('p', { class: 'muted' }, ctx.user?.email ?? '')),
-    form, sessoes));
+    aparencia, form, sessoes));
 }

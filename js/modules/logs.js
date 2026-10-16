@@ -3,7 +3,7 @@ import { h, toast, setTopbar, withLoading, formatDateTime } from '../ui.js';
 
 const LABEL = {
   projeto_criado: 'Projeto criado', projeto_editado: 'Projeto editado', projeto_removido: 'Projeto removido',
-  token_gerado: 'Token de integração gerado', pagamento_manual: 'Pagamento registrado', pagamento_status: 'Pagamento atualizado',
+  token_gerado: 'Token de integração gerado', grupo_renomeado: 'Grupo renomeado', pagamento_manual: 'Pagamento registrado', pagamento_status: 'Pagamento atualizado',
 };
 let alive = false;
 

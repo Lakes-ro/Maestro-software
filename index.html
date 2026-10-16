@@ -46,8 +46,10 @@
 
   <script type="module">
     import { initAuth } from './js/auth.js';
+    import { applyAccent, ACCENT_KEY } from './js/ui.js';
     import { initRouter, destroyRouter } from './js/router.js';
 
+    try { applyAccent(localStorage.getItem(ACCENT_KEY)); } catch { /* sem storage */ }
     initAuth({ onSignedIn: initRouter, onSignedOut: destroyRouter });
 
     if ('serviceWorker' in navigator) {

@@ -130,3 +130,14 @@ a.pcard:hover { border-color: var(--accent); }
   .form-grid { grid-template-columns: 1fr; }
   .prow .badge--muted { display: none; }
 }
+
+/* ---------- Personalização ---------- */
+.swatches { flex-wrap: wrap; align-items: center; }
+.color-input { width: 40px; height: 32px; padding: 2px; cursor: pointer; background: var(--bg-raised);
+  border: .5px solid var(--border-strong); border-radius: var(--radius-sm); }
+.hex-input { width: 96px; height: 32px; padding: 0 10px; color: var(--text); font: inherit; font-size: var(--fs-sm);
+  background: var(--bg-raised); border: .5px solid var(--border-strong); border-radius: var(--radius-sm); }
+.colorrow { display: flex; align-items: center; gap: var(--sp-2); }
+.group-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.group-head .nav-group__title { padding-bottom: 0; }
+.group-head .btn-icon { width: 30px; height: 30px; }

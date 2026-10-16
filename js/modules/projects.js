@@ -95,9 +95,15 @@ function paint() {
       h('button', { class: 'btn btn--primary', type: 'button', onclick: () => openForm() }, icon('plus', 16), 'Novo projeto')));
     return;
   }
-  root.replaceChildren(...[...groups()].map(([key, arr]) =>
+  const all = [...groups()];
+  root.replaceChildren(...all.map(([key, arr], gi) =>
     h('section', { class: 'nav-group' },
-      h('h2', { class: 'nav-group__title' }, key || 'Sem grupo'),
+      h('div', { class: 'group-head' },
+        h('h2', { class: 'nav-group__title' }, key || 'Sem grupo'),
+        h('div', { class: 'prow__actions' },
+          iconBtn('up', 'Subir grupo', () => moveGroup(key, -1), gi === 0),
+          iconBtn('down', 'Descer grupo', () => moveGroup(key, 1), gi === all.length - 1),
+          iconBtn('edit', 'Renomear grupo', () => renameGroup(key)))),
       h('div', { class: 'plist' }, ...arr.map((p, i) => row(p, i, arr, key))))));
 }
 
@@ -117,8 +123,44 @@ function reorder(fromId, toId, key) {
   return saveOrder(list, key);
 }
 
-async function saveOrder(list, key) {
-  const flat = [...groups()].flatMap(([k, arr]) => (k === key ? list : arr));
+function saveOrder(list, key) {
+  return persistFlat([...groups()].flatMap(([k, arr]) => (k === key ? list : arr)));
+}
+
+function moveGroup(key, dir) {
+  const all = [...groups()];
+  const i = all.findIndex(([k]) => k === key), j = i + dir;
+  if (j < 0 || j >= all.length) return;
+  all.splice(j, 0, all.splice(i, 1)[0]);
+  return persistFlat(all.flatMap(([, arr]) => arr));
+}
+
+function renameGroup(key) {
+  const input = h('input', { type: 'text', value: key, placeholder: 'Nome do grupo', autocomplete: 'off' });
+  modal({
+    title: key ? 'Renomear grupo' : 'Dar nome ao grupo',
+    body: h('label', { class: 'field' }, h('span', {}, key ? `Novo nome para "${key}"` : 'Projetos sem grupo'), input),
+    dismissible: false,
+    actions: [{ label: 'Cancelar' }, {
+      label: 'Salvar', variant: 'primary',
+      onClick: async () => {
+        const nome = input.value.trim();
+        if (nome === key) return;
+        const q = supabase.from('projetos').update({ grupo: nome || null });
+        const { error } = await withLoading(() => (key ? q.eq('grupo', key) : q.is('grupo', null)));
+        if (error) { toast(`Erro: ${error.message}`, 'error'); return false; }
+        await log('grupo_renomeado', { nome: `${key || 'Sem grupo'} → ${nome || 'Sem grupo'}` });
+        toast('Grupo atualizado.', 'success');
+        await load();
+        await ctx.reload();
+      },
+    }],
+  });
+  input.focus();
+  input.select();
+}
+
+async function persistFlat(flat) {
   const updates = flat.map((p, i) => ({ id: p.id, ordem: i, mudou: p.ordem !== i })).filter((u) => u.mudou);
   items = flat.map((p, i) => ({ ...p, ordem: i }));
   paint();
@@ -174,9 +216,10 @@ async function remove(p) {
 }
 
 /* ---------- Formulário ---------- */
-function openForm(p = null) {
-  const v = p ?? {};
+function openForm(p = null, defaults = {}) {
+  const v = p ?? defaults;
   let cor = v.cor || COLORS[0];
+  let dirty = false;
   const f = {};
 
   const text = (key, label, { span, ph, type = 'text', list } = {}) => {
@@ -188,14 +231,28 @@ function openForm(p = null) {
     return h('label', { class: 'field' }, h('span', {}, label), f[key]);
   };
 
+  const hex = h('input', { type: 'text', class: 'hex-input', value: cor, maxlength: '7', spellcheck: 'false', 'aria-label': 'Cor em hexadecimal' });
+  const custom = h('input', { type: 'color', class: 'color-input', value: cor, title: 'Escolher qualquer cor (RGB)', 'aria-label': 'Escolher cor personalizada' });
   const swatches = COLORS.map((c) => {
-    const b = h('button', {
-      type: 'button', class: 'swatch', style: { '--c': c }, 'aria-label': `Cor ${c}`, 'aria-pressed': String(c === cor),
-      onclick: () => { cor = c; swatches.forEach((s) => s.setAttribute('aria-pressed', String(s.dataset.c === c))); },
-    });
+    const b = h('button', { type: 'button', class: 'swatch', style: { '--c': c }, 'aria-label': `Cor ${c}`, onclick: () => setCor(c) });
     b.dataset.c = c;
     return b;
   });
+  function setCor(c) {
+    cor = c.toLowerCase();
+    custom.value = cor;
+    hex.value = cor;
+    swatches.forEach((s) => s.setAttribute('aria-pressed', String(s.dataset.c === cor)));
+    dirty = true;
+  }
+  custom.addEventListener('input', () => setCor(custom.value));
+  hex.addEventListener('change', () => {
+    const c = hex.value.trim();
+    if (/^#[0-9a-f]{6}$/i.test(c)) setCor(c);
+    else { hex.value = cor; toast('Use o formato #RRGGBB.', 'warn'); }
+  });
+  setCor(cor);
+  dirty = false;
   const chk = h('input', { type: 'checkbox', checked: !!v.modulo_pagamentos });
   const grupos = [...new Set(items.map((x) => x.grupo).filter(Boolean))];
 
@@ -203,7 +260,7 @@ function openForm(p = null) {
     text('nome', 'Nome do projeto', { ph: 'Ex.: Marketplace' }),
     text('grupo', 'Grupo', { ph: 'Ex.: Negócios', list: 'grupos-list' }),
     h('datalist', { id: 'grupos-list' }, ...grupos.map((g) => h('option', { value: g }))),
-    h('div', { class: 'field span-2' }, h('span', {}, 'Cor'), h('div', { class: 'swatches' }, ...swatches)),
+    h('div', { class: 'field span-2' }, h('span', {}, 'Cor'), h('div', { class: 'swatches' }, ...swatches, custom, hex)),
     select('status', 'Status', STATUS),
     select('nivel', 'Nível de integração', NIVEL),
     text('url_app', 'URL do sistema (abre dentro do Maestro)', { span: true, ph: 'https://...' }),
@@ -212,6 +269,8 @@ function openForm(p = null) {
     text('chave_publica', 'Chave pública (anon / publishable)', { span: true, type: 'password' }),
     text('url_dashboard', 'Link do dashboard (opcional; se vazio, é gerado pela URL do Supabase)', { span: true }),
     h('label', { class: 'check span-2' }, chk, h('span', {}, 'Ativar módulo de pagamentos (InfinitePay)')));
+
+  body.addEventListener('input', () => { dirty = true; });
 
   const collect = () => {
     const val = (k) => f[k].value.trim() || null;
@@ -225,10 +284,25 @@ function openForm(p = null) {
     };
   };
 
-  modal({
-    title: p ? 'Editar projeto' : 'Novo projeto', body,
-    actions: [{ label: 'Cancelar' }, { label: 'Salvar', variant: 'primary', onClick: () => save(p, collect()) }],
-  });
+  const actions = [{
+    label: 'Cancelar',
+    onClick: async () => !dirty || await confirmDialog('Descartar o que você preencheu?', { title: 'Descartar alterações', confirmLabel: 'Descartar', danger: true }),
+  }];
+  if (!p) {
+    actions.push({
+      label: 'Salvar e criar outro',
+      onClick: async () => {
+        const d = collect();
+        if ((await save(null, d)) === false) return false;
+        // mantém grupo, cor, status, nível, e-mail e pagamentos para agilizar o próximo cadastro
+        setTimeout(() => openForm(null, { grupo: d.grupo, cor: d.cor, status: d.status, nivel: d.nivel, email_supabase: d.email_supabase, modulo_pagamentos: d.modulo_pagamentos }), 0);
+      },
+    });
+  }
+  actions.push({ label: 'Salvar', variant: 'primary', onClick: () => save(p, collect()) });
+
+  // dismissible:false → clicar fora do formulário não descarta o que foi digitado
+  modal({ title: p ? 'Editar projeto' : 'Novo projeto', body, actions, dismissible: false });
   f.nome.focus();
 }
 
