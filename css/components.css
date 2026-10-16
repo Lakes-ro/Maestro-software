@@ -141,3 +141,6 @@ a.pcard:hover { border-color: var(--accent); }
 .group-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .group-head .nav-group__title { padding-bottom: 0; }
 .group-head .btn-icon { width: 30px; height: 30px; }
+
+.token-box .code { max-height: 220px; }
+.token-box details summary { cursor: pointer; color: var(--text-2); font-size: var(--fs-sm); margin-bottom: var(--sp-2); }

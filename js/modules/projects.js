@@ -332,12 +332,92 @@ await fetch('${SUPABASE_URL}/functions/v1/ingest', {
     pagamentos: [{ pedido_ref: 'MKT-0231', valor_centavos: 18000, status: 'pago', forma: 'pix' }],
   }),
 });`;
+  const sql = scriptSql(p, token);
   modal({
     title: 'Token de integração',
     body: h('div', { class: 'token-box' },
-      h('p', { class: 'muted' }, 'Copie agora: ele não será mostrado de novo. Guarde como secret no servidor do projeto.'),
-      h('code', { class: 'code' }, token),
-      h('pre', { class: 'code' }, exemplo)),
-    actions: [{ label: 'Copiar token', variant: 'primary', onClick: () => { copyText(token); return false; } }, { label: 'Fechar' }],
+      h('p', { class: 'muted' }, 'Copie agora: o token não será mostrado de novo.'),
+      h('strong', {}, 'Opção 1: script SQL (mais rápido)'),
+      h('p', { class: 'muted' }, 'Cole no SQL Editor do Supabase deste projeto e clique em Run. Ele guarda o token no Vault, cria o envio ao Maestro e agenda a sincronização diária.'),
+      h('pre', { class: 'code' }, sql),
+      h('details', {}, h('summary', {}, 'Opção 2: chamar pelo código do servidor'), h('pre', { class: 'code' }, exemplo)),
+      h('code', { class: 'code' }, token)),
+    actions: [
+      { label: 'Copiar script SQL', variant: 'primary', onClick: () => { copyText(sql, 'Script copiado!'); return false; } },
+      { label: 'Copiar token', onClick: () => { copyText(token); return false; } },
+      { label: 'Fechar' },
+    ],
+    dismissible: false,
   });
+}
+
+// Script SQL pronto para colar no SQL Editor do projeto conectado.
+// A única parte que muda de projeto para projeto é maestro.sync() (as consultas dos alertas).
+function scriptSql(p, token) {
+  const nome = p.nome.replace(/[\r\n]+/g, ' ');
+  const url = `${SUPABASE_URL}/functions/v1/ingest`;
+  const segredo = (chave, valor) => `  if exists (select 1 from vault.secrets where name = '${chave}') then
+    perform vault.update_secret((select id from vault.secrets where name = '${chave}'), '${valor}', '${chave}');
+  else
+    perform vault.create_secret('${valor}', '${chave}');
+  end if;`;
+
+  return `-- Maestro: conexão do projeto "${nome}"
+-- Cole no SQL Editor do Supabase DESTE projeto e clique em Run.
+create extension if not exists pg_net;
+create extension if not exists pg_cron;
+create extension if not exists supabase_vault;
+create schema if not exists maestro;
+
+-- 1) Guarda o token e o ID no Vault
+do $$
+begin
+${segredo('maestro_token', token)}
+${segredo('maestro_projeto_id', p.id)}
+end $$;
+
+-- 2) Envio ao Maestro
+create or replace function maestro.enviar(p_payload jsonb)
+returns bigint
+language plpgsql security definer set search_path = ''
+as $$
+declare v_token text; v_id text;
+begin
+  select decrypted_secret into v_token from vault.decrypted_secrets where name = 'maestro_token';
+  select decrypted_secret into v_id from vault.decrypted_secrets where name = 'maestro_projeto_id';
+  return net.http_post(
+    url := '${url}',
+    headers := jsonb_build_object('content-type', 'application/json', 'x-maestro-token', v_token),
+    body := jsonb_build_object('projeto_id', v_id) || p_payload
+  );
+end $$;
+revoke all on function maestro.enviar(jsonb) from public;
+
+-- 3) Alertas: a ÚNICA parte que muda de projeto para projeto
+create or replace function maestro.sync()
+returns void
+language plpgsql security definer set search_path = ''
+as $$
+declare v_n integer;
+begin
+  -- resolve o aviso de teste da conexão
+  perform maestro.enviar(jsonb_build_object('notificacoes', jsonb_build_array(
+    jsonb_build_object('tipo', 'conexao', 'titulo', 'Conexão com o Maestro ativa', 'contagem', 0))));
+
+  -- EXEMPLO (tire os "--" e ajuste a tabela e a condição):
+  -- select count(*) into v_n from public.produtos where denunciado;
+  -- perform maestro.enviar(jsonb_build_object('notificacoes', jsonb_build_array(
+  --   jsonb_build_object('tipo', 'produto_denunciado', 'titulo', 'Produtos denunciados', 'contagem', v_n, 'gravidade', 'atencao'))));
+end $$;
+revoke all on function maestro.sync() from public;
+
+-- 4) Agenda todos os dias às 8h (Brasília)
+select cron.schedule('maestro-sync', '0 11 * * *', 'select maestro.sync()');
+
+-- 5) Teste agora: deve aparecer "Conexão com o Maestro ativa" nas Notificações
+select maestro.enviar(jsonb_build_object('notificacoes', jsonb_build_array(
+  jsonb_build_object('tipo', 'conexao', 'titulo', 'Conexão com o Maestro ativa', 'contagem', 1, 'gravidade', 'info'))));
+
+-- Para conferir a resposta: select status_code, left(content::text, 200) from net._http_response order by created desc limit 1;
+`;
 }
