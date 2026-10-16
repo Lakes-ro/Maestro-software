@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c0f15">
+  <title>Maestro</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/variables.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+  <section id="login-view" class="login" hidden>
+    <form id="login-form" class="login__card" novalidate>
+      <div class="brand brand--lg"><span class="brand__logo">M</span><h1>Maestro</h1></div>
+      <p class="muted">Acesso restrito a administradores.</p>
+      <label class="field"><span>E-mail</span>
+        <input id="login-email" type="email" autocomplete="username" required>
+      </label>
+      <label class="field"><span>Senha</span>
+        <input id="login-pass" type="password" autocomplete="current-password" required>
+      </label>
+      <p id="login-error" class="form-error" role="alert" hidden></p>
+      <button class="btn btn--primary" type="submit">Entrar</button>
+    </form>
+  </section>
+
+  <div id="app" class="app" hidden>
+    <aside id="sidebar" class="sidebar" aria-label="Navegação principal"></aside>
+    <div id="scrim" class="scrim"></div>
+    <div class="main">
+      <header class="topbar">
+        <button id="btn-menu" class="btn-icon menu-btn" type="button" aria-label="Abrir menu"></button>
+        <h1 id="topbar-title" class="topbar__title"></h1>
+        <div id="topbar-actions" class="topbar__actions"></div>
+      </header>
+      <main id="view" class="view" tabindex="-1"></main>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="modal-root"></div>
+  <div id="loading" class="loading" aria-label="Carregando"><span class="spinner"></span></div>
+
+  <script type="module">
+    import { initAuth } from './js/auth.js';
+    import { initRouter, destroyRouter } from './js/router.js';
+
+    initAuth({ onSignedIn: initRouter, onSignedOut: destroyRouter });
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('SW:', e));
+    }
+  </script>
+</body>
+</html>
